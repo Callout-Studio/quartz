@@ -1,12 +1,14 @@
 /*
- * Callout Studio for Quartz 1.0.0
+ * Callout Studio for Quartz 1.1.0
  *
  * Draws the heading and inline callouts of the Callout Studio Obsidian
  * plugin while a Quartz site is built. It holds no callouts: it reads
- * them from .callout-studio/quartz.json in the content folder, which
- * Callout Studio writes in the vault.
+ * them from the note Callout Studio writes in the vault,
+ * callout-studio-quartz.md, in the content folder, and keeps that note
+ * off the site.
  *
- * Reads that file only. Writes nothing, and makes no network requests.
+ * Reads the content folder's notes only, to find that one. Writes
+ * nothing, and makes no network requests.
  *
  * Built from https://github.com/Niv20/obsidian-plugin-callout-studio
  * (src/web/). Do not edit: it is replaced on every update.
@@ -1233,26 +1235,60 @@ var CalloutStudioStatic = (() => {
     return false;
   }
 
-  // src/web/static/quartzData.ts
-  var QUARTZ_DATA_FOLDER = ".callout-studio";
-  var QUARTZ_DATA_NAME = "quartz.json";
-  var QUARTZ_DATA_PATH = `${QUARTZ_DATA_FOLDER}/${QUARTZ_DATA_NAME}`;
-  var QUARTZ_DATA_STAMP = "callout-studio";
-  var jsonText = (value) => `${JSON.stringify(value, null, 2)}
-`;
-  function readStampedJson(text) {
-    let parsed;
+  // src/web/static/quartzNote.ts
+  var QUARTZ_NOTE_KEY = "callout-studio-quartz";
+  var QUARTZ_NOTE_NAME = `${QUARTZ_NOTE_KEY}.md`;
+
+  // src/web/static/webNote.ts
+  var FINGERPRINT_PREFIX = "sha256:";
+  var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  function decodeBase64(text) {
+    if (text.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) return null;
+    const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+    const bytes = new Uint8Array(text.length / 4 * 3 - padding);
+    let at = 0;
+    for (let i = 0; i < text.length; i += 4) {
+      const n = ALPHABET.indexOf(text.charAt(i)) << 18 | ALPHABET.indexOf(text.charAt(i + 1)) << 12 | (Math.max(ALPHABET.indexOf(text.charAt(i + 2)), 0) & 63) << 6 | Math.max(ALPHABET.indexOf(text.charAt(i + 3)), 0) & 63;
+      if (at < bytes.length) bytes[at++] = n >> 16 & 255;
+      if (at < bytes.length) bytes[at++] = n >> 8 & 255;
+      if (at < bytes.length) bytes[at++] = n & 255;
+    }
+    return bytes;
+  }
+  var escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  var noteFenceRe = (key) => new RegExp(`^(\`{3,}|~{3,})[ \\t]*${escapeRegExp(key)}[ \\t]*$`);
+  function readNoteBody(key, body) {
+    var _a, _b, _c;
+    const lines = body.split(/\r?\n/);
+    const opener = noteFenceRe(key);
+    const open = lines.findIndex((line) => opener.test(line));
+    if (open < 0) return null;
+    const fence = (_c = (_b = /^(`{3,}|~{3,})/.exec((_a = lines[open]) != null ? _a : "")) == null ? void 0 : _b[1]) != null ? _c : "```";
+    const close = lines.findIndex((line, i) => i > open && line.trim() === fence);
+    if (close < 0) return null;
+    const [first = "", ...rest] = lines.slice(open + 1, close).map((line) => line.trim());
+    if (!first.startsWith(FINGERPRINT_PREFIX)) return null;
+    const fingerprint = first.slice(FINGERPRINT_PREFIX.length);
+    if (!/^[0-9a-f]{64}$/.test(fingerprint)) return null;
+    const bytes = decodeBase64(rest.join(""));
+    if (!bytes) return null;
     try {
-      parsed = JSON.parse(text);
+      return { json: new TextDecoder("utf-8", { fatal: true }).decode(bytes), fingerprint };
     } catch (e) {
       return null;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const value = { ...parsed };
-    const stamp = value[QUARTZ_DATA_STAMP];
-    delete value[QUARTZ_DATA_STAMP];
-    const fingerprint = stamp && typeof stamp === "object" && typeof stamp.fingerprint === "string" ? stamp.fingerprint : null;
-    return { value, fingerprint, body: jsonText(value) };
+  }
+  function splitFrontmatter(text) {
+    const open = /^---[ \t]*\r?\n/.exec(text);
+    if (!open) return { frontmatter: null, body: text };
+    const close = /^---[ \t]*(\r?\n|$)/m;
+    const rest = text.slice(open[0].length);
+    const end = close.exec(rest);
+    if (!end) return { frontmatter: null, body: text };
+    const cut = open[0].length + end.index + end[0].length;
+    const frontmatter = text.slice(0, cut);
+    return { frontmatter: frontmatter.endsWith("\n") ? frontmatter : `${frontmatter}
+`, body: text.slice(cut) };
   }
 
   // src/web/static/quartz.ts
@@ -1268,44 +1304,138 @@ var CalloutStudioStatic = (() => {
       constructor: void 0
     };
   }
+  function listNotes(node, root) {
+    const notes = [];
+    const seen = /* @__PURE__ */ new Set();
+    const walk = (folder, rel) => {
+      try {
+        const real = node.fs.realpathSync(folder);
+        if (seen.has(real)) return;
+        seen.add(real);
+      } catch (e) {
+        return;
+      }
+      let entries;
+      try {
+        entries = node.fs.readdirSync(folder, { withFileTypes: true });
+      } catch (e) {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+        const file = node.path.join(folder, entry.name);
+        const path = rel ? `${rel}/${entry.name}` : entry.name;
+        let folderHere = entry.isDirectory();
+        let fileHere = entry.isFile();
+        if (entry.isSymbolicLink()) {
+          try {
+            const stat = node.fs.statSync(file);
+            folderHere = stat.isDirectory();
+            fileHere = stat.isFile();
+          } catch (e) {
+            continue;
+          }
+        }
+        if (folderHere) walk(file, path);
+        else if (fileHere && /\.md$/i.test(entry.name)) notes.push({ rel: path, file });
+      }
+    };
+    walk(root, "");
+    return notes;
+  }
+  var nameOf = (rel) => {
+    var _a;
+    return ((_a = rel.split("/").pop()) != null ? _a : rel).toLowerCase();
+  };
+  var byPreference = (a, b) => a === QUARTZ_NOTE_NAME ? -1 : b === QUARTZ_NOTE_NAME ? 1 : a < b ? -1 : a > b ? 1 : 0;
+  var carriesData = (text) => {
+    if (!text.includes(QUARTZ_NOTE_KEY)) return false;
+    const opener = noteFenceRe(QUARTZ_NOTE_KEY);
+    return splitFrontmatter(text).body.split(/\r?\n/).some((line) => opener.test(line));
+  };
   function quartz(core, node) {
+    const findNotes = (directory) => {
+      const all = listNotes(node, directory);
+      const read2 = (note) => {
+        try {
+          return { ...note, text: node.fs.readFileSync(note.file, "utf8") };
+        } catch (e) {
+          return null;
+        }
+      };
+      const named = all.filter((note) => nameOf(note.rel) === QUARTZ_NOTE_NAME);
+      const keep = (notes) => notes.map(read2).filter((note) => note !== null && carriesData(note.text));
+      const byName = keep(named);
+      const found = byName.length > 0 ? byName : keep(all.filter((note) => !named.includes(note)));
+      return found.sort((a, b) => byPreference(a.rel, b.rel));
+    };
     const load = (ctx) => {
       var _a;
-      const directory = ((_a = ctx == null ? void 0 : ctx.argv) == null ? void 0 : _a.directory) || DEFAULT_DIRECTORY;
-      const file = `${directory.replace(/[\\/]+$/, "")}/${QUARTZ_DATA_PATH}`;
-      const asText = (why) => ({
+      const directory = (((_a = ctx == null ? void 0 : ctx.argv) == null ? void 0 : _a.directory) || DEFAULT_DIRECTORY).replace(/[\\/]+$/, "");
+      const found = findNotes(directory);
+      const notes = new Set(found.map((note) => note.rel));
+      const [first, ...others] = found;
+      const asText = (file2, why, more = []) => ({
         data: null,
-        file,
-        warnings: [`${why} Heading and inline callouts stay as text.`]
+        file: file2,
+        notes,
+        warnings: [`${why} Heading and inline callouts stay as text.`, ...more]
       });
-      let text;
+      if (!first) {
+        return asText(
+          directory,
+          `No note with Callout Studio's callouts was found in ${directory}. In Obsidian, create it from ${WHERE}, then publish it as you do your other notes.`
+        );
+      }
+      const file = `${directory}/${first.rel}`;
+      const twice = others.length > 0 ? [
+        `More than one note carries Callout Studio's callouts. Using ${file}; delete ${others.map((note) => `${directory}/${note.rel}`).join(", ")}.`
+      ] : [];
+      const edited = `${file} was changed by hand and cannot be read. In Obsidian, select Update now in ${WHERE}, then publish the note again if a plugin publishes your notes.`;
+      const block = readNoteBody(QUARTZ_NOTE_KEY, splitFrontmatter(first.text).body);
+      if (!block) return asText(file, edited, twice);
+      const fingerprint = node.crypto.createHash("sha256").update(block.json, "utf8").digest("hex");
+      if (fingerprint !== block.fingerprint) return asText(file, edited, twice);
+      let data;
       try {
-        text = node.fs.readFileSync(node.path.join(directory, QUARTZ_DATA_FOLDER, QUARTZ_DATA_NAME), "utf8");
-      } catch (error) {
-        const code = error == null ? void 0 : error.code;
-        if (code === "ENOENT" || code === "ENOTDIR") {
-          return asText(`${file} was not found. In Obsidian, create it from ${WHERE}.`);
-        }
-        return asText(`Could not read ${file} (${String(error)}).`);
+        data = JSON.parse(block.json);
+      } catch (e) {
+        return asText(file, edited, twice);
       }
-      const edited = `${file} was changed by hand and cannot be read. In Obsidian, select Update now in ${WHERE}.`;
-      const read2 = readStampedJson(text);
-      if (!read2 || read2.fingerprint === null) return asText(edited);
-      const fingerprint = node.crypto.createHash("sha256").update(read2.body, "utf8").digest("hex");
-      if (fingerprint !== read2.fingerprint) return asText(edited);
-      const data = read2.value;
       if (typeof data.version === "number" && data.version > FORMAT) {
-        return asText(`${file} was written by a newer Callout Studio. Update the Callout Studio Quartz plugin.`);
+        return asText(
+          file,
+          `${file} was written by a newer Callout Studio. Update the Callout Studio Quartz plugin.`,
+          twice
+        );
       }
-      if (data.version !== FORMAT || !Array.isArray(data.defs)) return asText(edited);
-      return { data, file, warnings: [] };
+      if (data.version !== FORMAT || !Array.isArray(data.defs)) return asText(file, edited, twice);
+      return { data, file, notes, warnings: twice };
     };
     const safely = (ctx) => {
+      var _a;
       try {
         return load(ctx);
       } catch (error) {
-        return { data: null, file: QUARTZ_DATA_PATH, warnings: [`Could not start (${String(error)}).`] };
+        const file = ((_a = ctx == null ? void 0 : ctx.argv) == null ? void 0 : _a.directory) || DEFAULT_DIRECTORY;
+        return { data: null, file, notes: /* @__PURE__ */ new Set(), warnings: [`Could not start (${String(error)}).`] };
       }
+    };
+    const relOf = (file, ctx) => {
+      var _a;
+      const data = file == null ? void 0 : file.data;
+      if (typeof (data == null ? void 0 : data.relativePath) === "string") return data.relativePath.replace(/\\/g, "/");
+      const onDisk = typeof (data == null ? void 0 : data.filePath) === "string" ? data.filePath : typeof (file == null ? void 0 : file.path) === "string" ? file.path : null;
+      if (onDisk === null) return null;
+      return node.path.relative(((_a = ctx == null ? void 0 : ctx.argv) == null ? void 0 : _a.directory) || DEFAULT_DIRECTORY, onDisk).replace(/\\/g, "/");
+    };
+    const keepOff = (file) => {
+      var _a, _b, _c;
+      const data = (_a = file.data) != null ? _a : file.data = {};
+      const frontmatter = data.frontmatter && typeof data.frontmatter === "object" ? data.frontmatter : data.frontmatter = {};
+      frontmatter.draft = true;
+      frontmatter.publish = false;
+      (_c = frontmatter[_b = QUARTZ_NOTE_KEY]) != null ? _c : frontmatter[_b] = FORMAT;
     };
     const transformWith = (data) => {
       const renderer = core.createWebRenderer(data, {
@@ -1339,8 +1469,18 @@ var CalloutStudioStatic = (() => {
       // Quiet: it runs in every worker. The build log hears it once, from
       // `externalResources`, which Quartz asks once for the pages.
       htmlPlugins: (ctx) => {
-        const { data } = safely(ctx);
-        return data ? [() => transformWith(data)] : [];
+        const { data, notes } = safely(ctx);
+        const draw = data ? transformWith(data) : null;
+        return [
+          () => (tree, file) => {
+            const rel = relOf(file, ctx);
+            if (file && rel !== null && notes.has(rel)) {
+              keepOff(file);
+              return;
+            }
+            draw == null ? void 0 : draw(tree, file);
+          }
+        ];
       },
       externalResources: (ctx) => {
         const { data, warnings } = safely(ctx);
@@ -1350,6 +1490,12 @@ var CalloutStudioStatic = (() => {
           js: [],
           additionalHead: (data == null ? void 0 : data.css) ? [styleElement(data.css)] : []
         };
+      },
+      // Quartz 5 only: the transformer above has marked the note by its property.
+      shouldPublish: (_ctx, [, file]) => {
+        var _a;
+        const frontmatter = (_a = file == null ? void 0 : file.data) == null ? void 0 : _a.frontmatter;
+        return !(frontmatter && typeof frontmatter === "object" && QUARTZ_NOTE_KEY in frontmatter);
       }
     });
   }

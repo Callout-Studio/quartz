@@ -8,21 +8,21 @@ The callouts are drawn into the page while it is built, so readers without JavaS
 
 ## What you need
 
-- The Callout Studio plugin, in the Obsidian vault your site is built from. The steps below assume your site's `content` folder is that vault.
+- The Callout Studio plugin, in the Obsidian vault your site is built from.
 - Quartz 5, or Quartz 4.
 
 ## Set it up
 
-1. In Obsidian, run **Callout Studio: Publish to the web** from the command palette, choose **Quartz**, and select **Create file**. Callout Studio writes `.callout-studio/quartz.json` in your vault, with your callouts in it.
+1. In Obsidian, run **Callout Studio: Publish to the web** from the command palette, choose **Quartz**, and select **Create note**. Callout Studio writes the note `callout-studio-quartz.md` in your vault, with your callouts in it.
 2. Install this plugin in your site, as below.
-3. Build and deploy your site as usual.
+3. Publish as usual. If a plugin publishes your notes, such as Quartz Syncer or Enveloppe, publish the new note with it too.
 
 ### Quartz 5
 
 In a terminal, in your site's folder, run:
 
 ```bash
-npx quartz plugin add github:Niv20/quartz-plugin-callout-studio
+npx quartz plugin add github:Callout-Studio/quartz
 ```
 
 This adds the plugin to `quartz.config.yaml` and `quartz.lock.json`. Commit and push both files, so your site's own build installs the plugin too.
@@ -32,7 +32,7 @@ This adds the plugin to `quartz.config.yaml` and `quartz.lock.json`. Commit and 
 In a terminal, in your site's folder, run:
 
 ```bash
-npm install github:Niv20/quartz-plugin-callout-studio
+npm install github:Callout-Studio/quartz
 ```
 
 Then, in `quartz.config.ts`, add this line after the other `import` lines:
@@ -55,28 +55,29 @@ Commit and push `package.json`, `package-lock.json` and `quartz.config.ts`.
 
 ## After you change a callout
 
-There is nothing to do. Callout Studio rewrites `.callout-studio/quartz.json` by itself, and your next build reads it.
+Callout Studio updates the note by itself, and your next build reads it. If a plugin publishes your notes, publish the note again.
 
 ## Updating the plugin
 
-- Quartz 5: `npx quartz plugin install --latest quartz-plugin-callout-studio`, then commit `quartz.lock.json`.
-- Quartz 4: `npm install github:Niv20/quartz-plugin-callout-studio` again, then commit `package-lock.json`.
+- Quartz 5: `npx quartz plugin install --latest quartz`, then commit `quartz.lock.json`. Quartz names the plugin after its repository, `quartz`.
+- Quartz 4: `npm install github:Callout-Studio/quartz` again, then commit `package-lock.json`.
 
 ## How it works
 
-The plugin is the same for every site, and holds nobody's callouts. While your site is built, it reads `.callout-studio/quartz.json` from your content folder, checks it, and draws your callouts with what it carries.
+The plugin is the same for every site, and holds nobody's callouts. While your site is built, it finds the note in your content folder, checks it, and draws your callouts with what it carries. You can rename the note and move it to any folder that is published.
 
-Quartz doesn't publish files whose folder name starts with a period, so the file stays off your site without a line in `ignorePatterns`. Obsidian's file list doesn't show it either.
+The note never becomes a page of your site. Its properties say `draft: true`, the plugin marks it a draft again while your site is built, and on Quartz 5 the plugin also leaves it out. If your Quartz 4 site publishes its drafts, add `CalloutStudio()` to `filters` in `quartz.config.ts` too.
 
 If something is wrong, the build log says so in a line that starts with `[Callout Studio]`, and the callouts stay as text. The build never fails because of this plugin. The usual causes:
 
-- **The file was not found.** Create it in Obsidian (step 1), and check that it reaches the folder your site is built from.
-- **The file was changed by hand.** In Obsidian, select **Update now** in the **Quartz** steps of **Publish to the web**.
-- **The file was written by a newer Callout Studio.** Update this plugin, as above.
+- **No note was found.** Create it in Obsidian (step 1), and check that it reaches the folder your site is built from. If a plugin publishes your notes, publish the note with it.
+- **The note was changed by hand.** In Obsidian, select **Update now** in the **Quartz** steps of **Publish to the web**, then publish the note again if a plugin publishes your notes.
+- **The note was written by a newer Callout Studio.** Update this plugin, as above.
+- **More than one note carries your callouts.** Delete the ones the build log names.
 
 ## Privacy
 
-The plugin makes no network requests. It reads only `.callout-studio/quartz.json` in your content folder, and writes nothing.
+The plugin makes no network requests. It reads the notes in your content folder to find the one with your callouts, and writes nothing.
 
 ## Source
 

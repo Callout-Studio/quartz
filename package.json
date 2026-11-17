@@ -1,13 +1,13 @@
 {
 	"name": "quartz-plugin-callout-studio",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Draws the heading and inline callouts of the Callout Studio Obsidian plugin while your Quartz site is built.",
 	"author": "Niv Libovitch",
 	"license": "0BSD",
-	"homepage": "https://github.com/Niv20/quartz-plugin-callout-studio#readme",
+	"homepage": "https://github.com/Callout-Studio/quartz#readme",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/Niv20/quartz-plugin-callout-studio"
+		"url": "https://github.com/Callout-Studio/quartz"
 	},
 	"bugs": {
 		"url": "https://github.com/Niv20/obsidian-plugin-callout-studio/issues"
@@ -27,7 +27,7 @@
 	"quartz": {
 		"name": "callout-studio",
 		"displayName": "Callout Studio",
-		"category": "transformer",
+		"category": ["transformer", "filter"],
 		"defaultOrder": 65
 	}
 }
