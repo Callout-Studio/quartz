@@ -1,5 +1,5 @@
 /*
- * Callout Studio for Quartz 1.1.0
+ * Callout Studio for Quartz 1.1.1
  *
  * Draws the heading and inline callouts of the Callout Studio Obsidian
  * plugin while a Quartz site is built. It holds no callouts: it reads
@@ -607,10 +607,11 @@ var CalloutStudioCore = (() => {
       h.classList.add(CSS_HEADING_LINE);
       stamp(h, parts.id, parts.metadata, resolved);
       textNode.data = textNode.data.slice(match[0].length);
-      const tokenEl = buildToken(h.ownerDocument, parts.id, parts.metadata, true, !hasTitle);
+      const doc = h.ownerDocument;
+      const tokenEl = buildToken(doc, parts.id, parts.metadata, true, !hasTitle);
       h.insertBefore(tokenEl, textNode);
       if (lastContent) {
-        const titleEl = h.ownerDocument.createElement("span");
+        const titleEl = doc.createElement("span");
         titleEl.classList.add(CSS_HEADING_TITLE);
         if (/[ \t]$/.test(match[0])) titleEl.classList.add(CSS_HEADING_TITLE_GAP);
         h.insertBefore(titleEl, textNode);
@@ -1171,9 +1172,10 @@ var CalloutStudioStatic = (() => {
   };
   var propertyValue = (attr, value) => attr === "class" ? value.split(/\s+/).filter((cls) => cls !== "") : value;
   function attrValue(value) {
-    if (value === null || value === void 0 || value === false) return null;
     if (Array.isArray(value)) return value.map(String).join(" ");
-    return typeof value === "string" ? value : String(value);
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || value === true) return String(value);
+    return null;
   }
   function read(node) {
     var _a, _b, _c;
